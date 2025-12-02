@@ -8,3 +8,7 @@ wheels/
 .env
 # Virtual environments
 .venv
+
+debug_json_error_*.txt
+debug_response_*.txt
+results_*.json
