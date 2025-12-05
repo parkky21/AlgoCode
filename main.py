@@ -268,8 +268,8 @@ class LeetCodeQuestionGenerator:
         selected_questions = []
         
         # Filter and select questions by difficulty
-        for difficulty, count in [("Easy", easy), ("Medium", medium), ("Hard", hard)]:
-            if count > 0:
+        for difficulty, count in [("easy", easy), ("medium", medium), ("hard", hard)]:
+            if count > 0:   
                 # Filter by difficulty (case-insensitive)
                 difficulty_df = self.df[
                     self.df['difficulty'].str.lower() == difficulty.lower()
@@ -308,7 +308,7 @@ class LeetCodeQuestionGenerator:
         starter_code = question_row.get('starter_code', '')
         entry_point = question_row.get('entry_point', '')
         tags = question_row.get('tags', '')
-        difficulty = question_row.get('difficulty', 'Medium')
+        difficulty = question_row.get('difficulty', 'medium').lower()
         
         # Parse tags if it's a string (could be JSON or comma-separated)
         if isinstance(tags, str):
