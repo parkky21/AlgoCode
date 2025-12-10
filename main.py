@@ -8,32 +8,65 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from schemas import CodingQuestion
 from mongodb_handler import MongoDBHandler
+from agent1 import CodeGenerationAgent
+from agent2 import JSONConversionAgent
 
 # Load environment variables from .env file
 load_dotenv()
 
 CODING_QUESTION_GENERATION_PROMPT = """You are an expert coding question generator for technical assessments (LeetCode style).
 
-Generate {count} {difficulty} level coding question(s) with the following requirements:
+Generate a {difficulty} level coding question with the following requirements:
+
+**Question Information:**
+
+**Problem Description:**
+{problem_description}
+
+**Entry Point:**
+{entry_point}
+
+**Tags:**
+{tags}
+
+**Difficulty:**
+{difficulty}
 
 **Requirements:**
-
-1. Use the provided question_description as the basis for generation. The description should be used to understand the problem context and requirements.
-2. Use the provided tags for the question. Include these tags in the output JSON.
-3. Each question should be a classic algorithmic or data structure problem
-4. Questions should be well-defined with clear problem statements
-5. Include detailed examples with explanations
-6. Provide comprehensive constraints
-7. Include starter code templates for Python, JavaScript, Java, and C++ with no imports or external libraries
-8. Include driver code for each language that reads input and calls the function with all necessary imports and libraries and inputs are leetcode style
-9. Include exactly 5 test cases (mix of visible and hidden test cases)
-10. Function name should be descriptive (e.g., search, twoSum, reverseString)
+1. Use the provided problem_description as the basis for generation. The description should be used to understand the problem context and requirements.
+2. Use the provided entry_point as the function name in your generated code.
+3. Use the provided tags for the question. Include these tags in the output JSON.
+4. Include detailed examples with explanations
+5. Provide comprehensive constraints
+6. Include starter code templates for Python, JavaScript, Java, and C++ with no imports or external libraries
+7. Include driver code for each language that reads input and calls the function with all necessary imports and libraries and inputs are leetcode style
+8. Include exactly 5 test cases (mix of visible and hidden test cases)
 
 **Important:**
-- Use the question_description provided in the context to generate required fields in the output JSON
-- Use the tags provided in the context for the tags field in the output JSON
+- Never modify or omit {{USER_CODE}} in any way.
 - Dont use libraries or imports which are not supported by Judge0 API.
-EXAMPLE DRIVER CODE FOR CPP
+- Thoroughly write the driver code for each language without any runtime errors.
+- Write the testcases first and then as per them write the driver code.
+
+PYTHON DRIVER CODE TEMPLATE:
+import sys
+import json
+
+{{USER_CODE}}
+
+# Driver code
+if __name__ == '__main__':
+    input_line = sys.stdin.read().strip()
+
+    # Remove outer quotes if input is like "1210"
+    if input_line.startswith('"') and input_line.endswith('"'):
+        input_line = input_line[1:-1]
+
+    solution = Solution()
+    print(solution.{{functionName}}(input_line))
+
+
+CPP DRIVER CODE TEMPLATE:
 #include <iostream>
 #include <vector>
 #include <string>
@@ -66,7 +99,7 @@ int main() {{
     return 0;
 }}
 
-Example Driver Code for Java
+JAVA DRIVER CODE TEMPLATE:
 import java.util.*;
 import java.io.*;
 
@@ -97,6 +130,67 @@ public class Main {{
         }}
     }}
 }}
+
+JAVASCRIPT DRIVER CODE TEMPLATE:
+const fs = require('fs');
+const path = require('path');
+
+{{USER_CODE}}
+
+function readInput() {{
+  const filename = process.argv[2];
+  try {{
+    if (filename) {{
+      return fs.readFileSync(path.resolve(filename), 'utf8').trim();
+    }} else {{
+      return fs.readFileSync(0, 'utf8').trim();
+    }}
+  }} catch (err) {{
+    console.error('Error reading input:', err.message);
+    process.exit(1);
+  }}
+}}
+
+function parseInput(raw) {{
+  try {{
+    return JSON.parse(raw);
+  }} catch (e) {{
+    if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {{
+      return raw.slice(1, -1);
+    }}
+    return raw;
+  }}
+}}
+
+function callUserFunction(parsedInput) {{   
+  const funcName = '{{functionName}}';
+  const className = 'Solution';
+  const methodName = '{{functionName}}';
+
+  if (typeof global[funcName] === 'function') {{
+    return global[funcName](parsedInput);
+  }}
+
+  if (typeof eval(funcName) === 'function') {{
+    return eval(funcName)(parsedInput);
+  }}
+
+  if (typeof eval(className) === 'function') {{
+    const SolutionClass = eval(className);
+    const inst = new SolutionClass();
+    if (typeof inst[methodName] === 'function') {{
+      return inst[methodName](parsedInput);
+    }}
+  }}
+
+  console.error(`Could not find function '${{funcName}}' or class '${{className}}.${{methodName}}' to call.`);
+  process.exit(1);
+}}
+
+const raw = readInput();
+const parsed = parseInput(raw);
+const result = callUserFunction(parsed);
+console.log(result);
 
 **Output Format:**
 
@@ -146,16 +240,7 @@ Return a JSON array of questions. Each question MUST strictly follow this exact 
   ]
 }}
 
-**CRITICAL REQUIREMENTS:**
-- Include exactly 5 test cases in the testCases array
-- All field names must match exactly (case-sensitive): title, description, difficulty, tags, functionName, functionSignature, examples, constraints, starterCode, driverCode, testCases
-- examples array items must have: input (required), output (required), explanation (optional)
-- testCases array items must have: input (required), expectedOutput (required), isHidden (required, boolean)
-- starterCode must have: python, javascript, java, cpp (all required)
-- driverCode must have: python, javascript, java, cpp (all required)
-- Do NOT include any extra fields not in the schema above
-- Do NOT include _id or id fields
-
+Do NOT include any extra fields not in the schema above
 Return ONLY the JSON array, no additional text or markdown formatting."""
 
 
@@ -182,6 +267,11 @@ class LeetCodeQuestionGenerator:
         self.model = model
         self.dataset = None
         self.df = None
+        
+        # Initialize the two agents
+        self.agent1 = CodeGenerationAgent(openai_api_key=api_key, model=model)
+        self.agent2 = JSONConversionAgent(openai_api_key=api_key, model=model)
+        print("✓ Initialized Agent 1 (Code Generation) and Agent 2 (JSON Conversion)")
         
         # Initialize MongoDB handler if enabled
         self.mongodb_handler = None
@@ -297,6 +387,7 @@ class LeetCodeQuestionGenerator:
     def _create_prompt(self, question_row: pd.Series) -> str:
         """
         Create a prompt for OpenAI based on the question data.
+        Only includes problem_description, entry_point, tags, and difficulty.
         
         Args:
             question_row: A pandas Series containing question data
@@ -305,7 +396,6 @@ class LeetCodeQuestionGenerator:
             Formatted prompt string
         """
         problem_description = question_row.get('problem_description', '')
-        starter_code = question_row.get('starter_code', '')
         entry_point = question_row.get('entry_point', '')
         tags = question_row.get('tags', '')
         difficulty = question_row.get('difficulty', 'medium').lower()
@@ -323,36 +413,15 @@ class LeetCodeQuestionGenerator:
         else:
             tags_str = str(tags)
         
-        # Create context from the question
-        context = f"""Based on the following LeetCode question, generate the same question:
-
-**Question Description (use this as the basis for your question):**
-{problem_description}
-
-**Tags (use these tags in your output):**
-{tags_str}
-
-**Starter Code:**
-{starter_code}
-
-**Entry Point:**
-{entry_point}
-
-**Difficulty:**
-{difficulty}
-
-"""
-        
-        # Use the base prompt template
+        # Use the base prompt template with all required fields
         prompt = CODING_QUESTION_GENERATION_PROMPT.format(
-            count=1,
-            difficulty=difficulty
+            difficulty=difficulty,
+            problem_description=problem_description,
+            entry_point=entry_point,
+            tags=tags_str
         )
         
-        # Combine context with the prompt
-        full_prompt = f"{context}\n\n{prompt}"
-        
-        return full_prompt
+        return prompt
     
     def _clean_json_content(self, content: str) -> str:
         """
@@ -528,114 +597,75 @@ class LeetCodeQuestionGenerator:
     
     def generate_question(self, question_row: pd.Series) -> Dict:
         """
-        Generate a question using OpenAI API for a single question row.
+        Generate a question using the two-agent system.
+        
+        Agent 1: Generates fully functional code for all 4 languages
+        Agent 2: Converts the code to JSON format matching CodingQuestion schema
         
         Args:
             question_row: A pandas Series containing question data
             
         Returns:
-            Dictionary containing the OpenAI response
+            Dictionary containing the generated question or error information
         """
-        prompt = self._create_prompt(question_row)
+        problem_description = question_row.get('problem_description', '')
+        entry_point = question_row.get('entry_point', '')
+        tags = question_row.get('tags', '')
+        difficulty = question_row.get('difficulty', 'medium').lower()
+        
+        # Extract input_output test cases (first 5)
+        input_output = question_row.get('input_output', [])
+        if isinstance(input_output, str):
+            try:
+                input_output = json.loads(input_output)
+            except:
+                input_output = []
+        if not isinstance(input_output, list):
+            input_output = []
+        # Take first 5 test cases
+        test_cases_examples = input_output[:5] if input_output else []
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert coding question generator. Always return valid JSON arrays that strictly match the CodingQuestion schema. Ensure all required fields are present and field names match exactly (case-sensitive)."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.7
+            # Step 1: Agent 1 - Generate fully functional code for all languages
+            print("  → Agent 1: Generating code for all 4 languages...")
+            generated_codes = self.agent1.generate_code(
+                problem_description=problem_description,
+                entry_point=entry_point,
+                tags=tags,
+                difficulty=difficulty,
+                test_cases_examples=test_cases_examples
             )
+            print("  ✓ Agent 1: Code generation completed")
             
-            content = response.choices[0].message.content
+            # Step 2: Agent 2 - Convert code to JSON format
+            print("  → Agent 2: Converting code to JSON format...")
+            question_json = self.agent2.convert_to_json(
+                generated_codes=generated_codes,
+                problem_description=problem_description,
+                entry_point=entry_point,
+                tags=tags,
+                difficulty=difficulty,
+                test_cases_examples=test_cases_examples
+            )
+            print("  ✓ Agent 2: JSON conversion completed")
             
-            # Try to parse JSON response
+            # Validate against schema
             try:
-                # Remove markdown code blocks if present
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0].strip()
-                
-                # Try parsing first - if it works, great!
-                try:
-                    result = json.loads(content)
-                except json.JSONDecodeError:
-                    # If parsing fails, try cleaning and parsing again
-                    content = self._clean_json_content(content)
-                    result = json.loads(content)
-                
-                # Ensure it's a list/array
-                if not isinstance(result, list):
-                    # If it's a dict with a key containing the array, extract it
-                    if isinstance(result, dict) and len(result) == 1:
-                        result = list(result.values())[0]
-                    else:
-                        # Wrap in array if single object
-                        result = [result]
-                
-                # Validate each question against the schema
-                validated_questions = []
-                validation_errors = []
-                
-                for idx, question_data in enumerate(result):
-                    try:
-                        # Validate against CodingQuestion schema
-                        validated_question = CodingQuestion(**question_data)
-                        # Convert back to dict for JSON serialization
-                        validated_questions.append(validated_question.model_dump(exclude_none=True))
-                    except Exception as e:
-                        validation_errors.append(f"Question {idx + 1}: {str(e)}")
-                
-                if validation_errors:
-                    return {
-                        "success": False,
-                        "error": f"Schema validation failed: {'; '.join(validation_errors)}",
-                        "raw_response": content,
-                        "partial_result": validated_questions if validated_questions else None
-                    }
+                validated_question = CodingQuestion(**question_json)
+                validated_question_dict = validated_question.model_dump(exclude_none=True)
                 
                 return {
                     "success": True,
-                    "response": validated_questions,
-                    "raw_response": content
+                    "response": [validated_question_dict],  # Return as list for consistency
+                    "generated_codes": generated_codes,  # Include generated codes for reference
+                    "raw_response": None
                 }
-            except json.JSONDecodeError as e:
-                # Try to extract more context about the error
-                error_msg = f"Failed to parse JSON: {str(e)}"
-                if hasattr(e, 'pos') and e.pos is not None:
-                    # Show context around the error
-                    start = max(0, e.pos - 100)
-                    end = min(len(content), e.pos + 100)
-                    error_context = content[start:end]
-                    error_msg += f"\nError context (char {e.pos}): ...{error_context}..."
-                
-                # Save raw response for debugging
-                debug_file = f"debug_json_error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-                try:
-                    with open(debug_file, 'w', encoding='utf-8') as f:
-                        f.write("Raw response from OpenAI:\n")
-                        f.write("=" * 80 + "\n")
-                        f.write(response.choices[0].message.content)
-                        f.write("\n" + "=" * 80 + "\n")
-                        f.write("\nCleaned content:\n")
-                        f.write("=" * 80 + "\n")
-                        f.write(content)
-                    print(f"⚠ Debug info saved to {debug_file}")
-                except Exception:
-                    pass
-                
+            except Exception as e:
                 return {
                     "success": False,
-                    "error": error_msg,
-                    "raw_response": content[:500] if len(content) > 500 else content  # Truncate for response
+                    "error": f"Schema validation failed: {str(e)}",
+                    "generated_codes": generated_codes,
+                    "partial_result": question_json
                 }
                 
         except Exception as e:
@@ -781,7 +811,7 @@ if __name__ == "__main__":
     # Process questions: 2 easy, 2 medium, 1 hard
     # Results will be automatically saved to a JSON file (default: results_<timestamp>.json)
     # You can also specify a custom filename: generator.process_questions(easy=2, medium=2, hard=1, output_file="my_results.json")
-    results = generator.process_questions(easy=2, medium=2, hard=1)
+    results = generator.process_questions(easy=0, medium=1, hard=0)
     
     # Print summary
     print(f"\n{'='*50}")
