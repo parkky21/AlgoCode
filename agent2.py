@@ -71,12 +71,19 @@ class JSONConversionAgent:
                         "content": """You are an expert at converting code into structured JSON format for coding questions.
                         
 Your task is to:
-1. Extract driver code from the provided full code
-2. Create starter code (solution class/function with placeholder)
+1. Extract driver code from the provided full code - USE THE ENTIRE CODE, DO NOT SKIP ANY ESSENTIAL PARTS
+2. Create starter code (solution class/function with placeholder for main logic only)
 3. Generate test cases (5 total, mix of visible and hidden)
 4. Generate constraints
 5. Generate examples with explanations
 6. Create proper function signatures
+
+CRITICAL RULES:
+- Driver code must include ALL essential code from the full code (imports, helper functions, classes, etc.)
+- Only the main solution logic should be in starter code (the core algorithm)
+- Everything else (parsing logic, helper functions, utility classes) should remain in driver code
+- Do NOT skip any code that is essential for compilation/running
+- Starter code should only contain the skeleton of the main solution function/class method
 
 Return ONLY valid JSON matching the CodingQuestion schema. No markdown, no explanations."""
                     },
@@ -179,16 +186,25 @@ Return ONLY valid JSON matching the CodingQuestion schema. No markdown, no expla
 **Your Task:**
 
 1. Extract the driver code from each language's full code
-   - Driver code is the part that reads input, calls the solution, and prints output
-   - Keep all imports and setup code needed for Judge0
+   - Driver code must include EVERYTHING from the full code EXCEPT the main solution logic
+   - Include ALL imports, helper functions, utility classes, parsing logic
+   - Include ALL code needed for reading input, parsing, and output formatting
+   - Keep the complete input parsing logic (extracting variables from string like "nums = [3,3], target = 6")
+   - Keep the complete output formatting logic (converting result to string format)
+   - IMPORTANT: Do NOT skip any essential code - everything except the core solution algorithm should be in driver code
+   - The driver code should be fully functional and compilable when combined with starter code
+   - Use {{USER_CODE}} placeholder in driver code where the starter code should be inserted
    - IMPORTANT: Ensure driver code reads stdin as a STRING and outputs as a STRING
    - Judge0 provides stdin as a string, so code should read it as raw string first, then parse if needed
    - Output must always be a string (convert arrays/objects to string representation)
 
 2. Create starter code for each language
-   - Starter code should have the solution class/function with the name {entry_point}
-   - Replace the implementation with placeholder comments like "# Your code here" or "// Your code here"
+   - Starter code should ONLY contain the solution class/function with the name {entry_point}
+   - Replace ONLY the main algorithm/logic implementation with placeholder comments
    - Keep the function signature exactly as in the full code
+   - Keep method/function structure, but replace the core logic with "# Your code here" or "// Your code here"
+   - DO NOT include imports, helper functions, or parsing logic in starter code
+   - Starter code should be a minimal skeleton that users fill in with their solution
    - Use {{USER_CODE}} placeholder in driver code where the starter code should be inserted
 
 3. Generate exactly 5 test cases
@@ -267,7 +283,10 @@ Return a JSON object matching this exact structure:
 - Generate exactly 5 test cases
 - All code must be properly escaped for JSON (use \\n for newlines)
 - Ensure the starter code function/class name matches {entry_point} exactly
-- Driver code should be the extracted portion that reads input and calls the solution"""
+- Driver code should include ALL code from the full code except the main solution logic
+- DO NOT skip any imports, helper functions, parsing logic, or output formatting code
+- Starter code should be minimal - only the solution class/function skeleton with placeholder for main logic
+- The combination of driver code + starter code should be identical to the original full code"""
         
         return prompt
     

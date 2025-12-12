@@ -67,6 +67,7 @@ Each value should be a complete, runnable code string that:
 2. Contains the solution class/function with the exact name specified in entry_point
 3. Includes driver code that reads input and calls the function for Judge0 testing
 4. Is immediately compilable and runnable without any modifications
+5. Output format must be CONSISTENT across all languages - use lowercase "true"/"false" for booleans (even in Python)
 
 Return ONLY valid JSON, no markdown, no explanations."""
                     },
@@ -110,6 +111,20 @@ Return ONLY valid JSON, no markdown, no explanations."""
         if test_cases_examples is None:
             test_cases_examples = []
         
+        # Check if any test case has boolean output (true/false)
+        has_boolean_output = False
+        if test_cases_examples:
+            for test_case in test_cases_examples[:5]:
+                output_val = ""
+                if isinstance(test_case, dict):
+                    output_val = str(test_case.get('output', '')).lower()
+                elif isinstance(test_case, list) and len(test_case) >= 2:
+                    output_val = str(test_case[1]).lower()
+                
+                if "true" in output_val or "false" in output_val:
+                    has_boolean_output = True
+                    break
+        
         # Format test cases examples
         test_cases_section = ""
         if test_cases_examples:
@@ -144,6 +159,9 @@ Return ONLY valid JSON, no markdown, no explanations."""
             test_cases_section += "   - Numbers should be output as string representation\n"
             test_cases_section += "   - Match the EXACT format from the examples (spacing, brackets, etc.)\n"
         
+        # Get the conditional boolean point
+        boolean_point = self._get_boolean_point(has_boolean_output)
+        
         prompt = f"""Generate fully functional, runnable code for all 4 languages based on the following problem:
 
 **Problem Description:**
@@ -169,7 +187,7 @@ Return ONLY valid JSON, no markdown, no explanations."""
    - Driver code that outputs the result as a STRING
    - The code must be immediately compilable and runnable
    - Judge0 Request Format: code (string), stdin (string), expectedOutput (string)
-
+{boolean_point}
 3. Python:
    - Use class Solution with method {entry_point} OR function {entry_point}
    - Read input from sys.stdin.read() as a STRING (not parsed)
@@ -177,13 +195,16 @@ Return ONLY valid JSON, no markdown, no explanations."""
    - Parse the input string to extract variable values (e.g., parse "nums = [3,3], target = 6" to get nums=[3,3] and target=6)
    - Call the solution with parsed values
    - Convert the result to a STRING matching the output format (e.g., "[0, 1]" or "None")
+   - IMPORTANT: Convert Python True/False to lowercase "true"/"false" strings
    - Print the result as a STRING
    - Example: 
      input_str = sys.stdin.read().strip()  # e.g., "nums = [3,3], target = 6"
      # Parse input_str to extract nums and target
      # Call solution
      # Convert result to string format matching examples
-     print(result_string)
+     # If result is boolean, convert True->"true", False->"false"
+     result_str = str(result).replace("True", "true").replace("False", "false")
+     print(result_str)
 
 4. JavaScript:
    - Use class Solution with method {entry_point} OR function {entry_point}
@@ -241,10 +262,15 @@ Return ONLY valid JSON, no markdown, no explanations."""
      d) Extract each variable assignment (e.g., "nums = [3,3]" -> extract array [3,3])
      e) Pass parsed values to your solution function
      f) Convert the result to a STRING matching the output format from examples
-   - Output must be a STRING matching the exact format from test cases examples
-   - For arrays, output as string like "[0, 1]" (with exact spacing)
-   - For None/null, output as string "None" or "null" (match the format in examples)
-   - Match the EXACT format shown in the test cases examples above (spacing, brackets, etc.)
+   - Output must be a STRING matching the EXACT format from test cases examples
+   - CRITICAL: Output format must be CONSISTENT across all languages:
+     * Boolean values: Use lowercase "true"/"false" (NOT "True"/"False" in Python)
+     * Arrays: Output as string like "[0, 1]" (with exact spacing)
+     * None/null: Output as string "None" or "null" (match the format in examples)
+     * Numbers: Output as string representation
+   - Python-specific: Convert True/False to "true"/"false" strings to match other languages
+   - Match the EXACT format shown in the test cases examples above (spacing, brackets, case, etc.)
+   - All languages must produce IDENTICAL string output for the same input
 
 8. Make sure the code is production-ready and handles edge cases.
 
@@ -252,4 +278,27 @@ Return a JSON object with keys: "python", "javascript", "java", "cpp"
 Each value should be the complete code as a string (use \\n for newlines in JSON)."""
         
         return prompt
+    
+    def _get_boolean_point(self, has_boolean_output: bool) -> str:
+        """
+        Returns the 5th point about boolean handling if test cases contain boolean outputs.
+        
+        Args:
+            has_boolean_output: Whether any test case has boolean output (true/false)
+            
+        Returns:
+            String with the 5th point if has_boolean_output is True, empty string otherwise
+        """
+        if has_boolean_output:
+            return """
+5. CRITICAL - Boolean Output Format (REQUIRED for this problem):
+   - The test cases contain boolean outputs (true/false)
+   - ALL languages MUST output lowercase "true" or "false" as strings
+   - Python-specific: You MUST convert Python's True/False to lowercase "true"/"false" strings
+   - Example conversion in Python:
+     result_str = str(result).replace("True", "true").replace("False", "false")
+   - JavaScript, Java, and C++ should also output "true"/"false" as strings (not boolean values)
+   - The output format must match EXACTLY: "true" or "false" (lowercase, as strings)
+   - This is critical because test cases expect string output, not boolean values"""
+        return ""
 
